@@ -1,45 +1,40 @@
 require('dotenv').config();
 const express = require('express');
 const puppeteer = require('puppeteer');
-const bodyParser = require('body-parser');
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Route to publish video on TikTok
+app.get('/', (req, res) => {
+  res.send('TikTok Puppeteer API is running');
+});
+
 app.post('/publish', async (req, res) => {
-    const { videoPath, caption } = req.body;
+  try {
+    const { url } = req.body;
 
-    if (!videoPath || !caption) {
-        return res.status(400).send("Missing videoPath or caption");
-    }
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    });
 
-    try {
-        const browser = await puppeteer.launch({
-            headless: false, // TikTok needs a visible browser
-            args: ["--no-sandbox", "--disable-setuid-sandbox"]
-        });
+    const page = await browser.newPage();
+    await page.goto(url || 'https://example.com');
 
-        const page = await browser.newPage();
-        await page.goto('https://www.tiktok.com/login');
+    const title = await page.title();
 
-        // هنا يمكنك إضافة خطوات تسجيل الدخول تلقائيًا
-        // ثم رفع الفيديو ونشره
-        // 👈 مؤقت، تحتاج إعداد يدوياً أول مرة لتسجيل الدخول وحفظ cookies
+    await browser.close();
 
-        console.log("Video publishing simulation for:", videoPath);
+    res.json({ success: true, title });
 
-        await browser.close();
-        res.send({ success: true, message: "Video processed (simulation)" });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ error: error.message });
-    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.listen(PORT, () => {
-    console.log(`TikTok Publisher API running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
