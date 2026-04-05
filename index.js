@@ -5,108 +5,71 @@ const multer = require('multer');
 const fs = require('fs');
 
 const app = express();
-
-// إعداد multer لحفظ الفيديو مؤقتًا
-const upload = multer({ dest: 'uploads/' });
-
 const PORT = process.env.PORT || 3000;
 
-// اختبار السيرفر
+// رفع الملفات
+const upload = multer({ dest: 'uploads/' });
+
 app.get('/', (req, res) => {
-    res.send('TikTok Puppeteer API is running 🚀');
+    res.send('TikTok API with cookies is running 🚀');
 });
 
-// endpoint للنشر
 app.post('/publish', upload.single('video'), async (req, res) => {
-    let browser;
-
     try {
-        const videoPath = req.file?.path;
-        const caption = req.body.caption || '';
+        const caption = req.body.caption;
+        const videoPath = req.file.path;
 
-        if (!videoPath) {
-            return res.status(400).json({ error: 'video is required' });
+        if (!videoPath || !caption) {
+            return res.status(400).json({ error: 'video + caption required' });
         }
 
-        console.log('📥 Video received:', videoPath);
-
-        // تشغيل Puppeteer
-        browser = await puppeteer.launch({
+        const browser = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+            args: ["--no-sandbox", "--disable-setuid-sandbox"],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
         });
 
         const page = await browser.newPage();
 
-        // فتح TikTok upload مباشرة
-        await page.goto('https://www.tiktok.com/upload?lang=en', {
+        // ✅ تحميل cookies
+        const cookies = JSON.parse(fs.readFileSync('./cookies.json', 'utf-8'));
+        await page.setCookie(...cookies);
+
+        // ✅ دخول مباشر بدون login
+        await page.goto('https://www.tiktok.com/', {
             waitUntil: 'networkidle2'
         });
 
-        console.log('🌐 Opened TikTok upload page');
-
-        // ⚠️ مهم: لازم تكون مسجل دخول مسبقًا (كوكيز)
-        // وإلا لن ينجح
+        // تحقق هل الحساب مسجل
+        await page.goto('https://www.tiktok.com/upload?lang=en');
 
         // رفع الفيديو
-        const inputUploadHandle = await page.waitForSelector('input[type=file]', { timeout: 60000 });
-        await inputUploadHandle.uploadFile(videoPath);
+        const input = await page.$('input[type="file"]');
+        await input.uploadFile(videoPath);
 
-        console.log('📤 Video uploaded');
+        // انتظار ظهور caption
+        await page.waitForSelector('textarea');
 
-        // انتظار ظهور حقل الكتابة
-        await page.waitForTimeout(5000);
+        await page.type('textarea', caption);
 
-        // كتابة الكابشن
-        try {
-            const captionBox = await page.waitForSelector('div[contenteditable="true"]', { timeout: 20000 });
-            await captionBox.click();
-            await page.keyboard.type(caption);
-            console.log('✍️ Caption added');
-        } catch (e) {
-            console.log('⚠️ Caption selector may need update');
-        }
+        // زر النشر
+        await page.click('button:has-text("Post")');
 
-        // انتظار بسيط
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(8000);
 
-        // الضغط على زر النشر
-        try {
-            const buttons = await page.$$('button');
-            for (let btn of buttons) {
-                const text = await page.evaluate(el => el.innerText, btn);
-                if (text.toLowerCase().includes('post')) {
-                    await btn.click();
-                    console.log('🚀 Clicked Post button');
-                    break;
-                }
-            }
-        } catch (e) {
-            console.log('⚠️ Could not click post button');
-        }
+        await browser.close();
 
-        // انتظار اكتمال النشر
-        await page.waitForTimeout(10000);
+        // حذف الملف بعد الرفع
+        fs.unlinkSync(videoPath);
 
-        res.json({ success: true, message: 'Video published (or attempted)' });
+        res.json({ success: true });
 
-    } catch (error) {
-        console.error('❌ Error:', error);
-        res.status(500).json({ error: error.message });
-
-    } finally {
-        // إغلاق المتصفح
-        if (browser) await browser.close();
-
-        // حذف الفيديو بعد الاستخدام
-        if (req.file?.path) {
-            fs.unlink(req.file.path, () => { });
-        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
     }
 });
 
-// تشغيل السيرفر
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
