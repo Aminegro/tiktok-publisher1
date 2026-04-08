@@ -15,57 +15,101 @@ app.get('/', (req, res) => {
 });
 
 app.post('/publish', upload.single('video'), async (req, res) => {
+    let browser;
+
     try {
         const caption = req.body.caption;
-        const videoPath = req.file.path;
+        const videoPath = req.file?.path;
 
         if (!videoPath || !caption) {
             return res.status(400).json({ error: 'video + caption required' });
         }
 
-        const browser = await puppeteer.launch({
+        // 🚀 تشغيل المتصفح بطريقة مستقرة
+        browser = await puppeteer.launch({
             headless: true,
-            args: ["--no-sandbox", "--disable-setuid-sandbox"],
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
         });
 
         const page = await browser.newPage();
 
-        // ✅ تحميل cookies
-        const cookies = JSON.parse(fs.readFileSync('./cookies.json', 'utf-8'));
-        await page.setCookie(...cookies);
+        // 🔥 حل مشكلة timeout نهائياً
+        await page.setDefaultNavigationTimeout(0);
 
-        // ✅ دخول مباشر بدون login
+        // ✅ التأكد من وجود cookies
+        if (!fs.existsSync('./cookies.json')) {
+            throw new Error('cookies.json not found');
+        }
+
+        const cookies = JSON.parse(fs.readFileSync('./cookies.json', 'utf-8'));
+
+        // 🔥 مهم: لازم نفتح الموقع قبل setCookie
         await page.goto('https://www.tiktok.com/', {
-            waitUntil: 'networkidle2'
+            waitUntil: 'domcontentloaded',
+            timeout: 0
         });
 
-        // تحقق هل الحساب مسجل
-        await page.goto('https://www.tiktok.com/upload?lang=en');
+        await page.setCookie(...cookies);
 
-        // رفع الفيديو
+        // إعادة تحميل الصفحة بعد cookies
+        await page.reload({
+            waitUntil: 'domcontentloaded'
+        });
+
+        console.log('✅ Cookies loaded');
+
+        // 🔥 الدخول مباشرة لصفحة الرفع
+        await page.goto('https://www.tiktok.com/upload?lang=en', {
+            waitUntil: 'domcontentloaded',
+            timeout: 0
+        });
+
+        // ⏳ انتظار input رفع الفيديو
+        await page.waitForSelector('input[type="file"]', { timeout: 60000 });
+
         const input = await page.$('input[type="file"]');
         await input.uploadFile(videoPath);
 
-        // انتظار ظهور caption
-        await page.waitForSelector('textarea');
+        console.log('✅ Video uploaded');
+
+        // ⏳ انتظار textarea
+        await page.waitForSelector('textarea', { timeout: 60000 });
 
         await page.type('textarea', caption);
 
-        // زر النشر
-        await page.click('button:has-text("Post")');
+        console.log('✅ Caption added');
 
-        await page.waitForTimeout(8000);
+        // ⏳ زر النشر (قد يختلف selector)
+        const postButton = await page.$('button');
+
+        if (postButton) {
+            await postButton.click();
+        } else {
+            throw new Error('Post button not found');
+        }
+
+        await page.waitForTimeout(10000);
+
+        console.log('✅ Posted');
 
         await browser.close();
 
-        // حذف الملف بعد الرفع
+        // حذف الملف
         fs.unlinkSync(videoPath);
 
         res.json({ success: true });
 
     } catch (err) {
-        console.error(err);
+        console.error('❌ ERROR:', err);
+
+        if (browser) await browser.close();
+
         res.status(500).json({ error: err.message });
     }
 });
